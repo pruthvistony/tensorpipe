@@ -19,7 +19,6 @@
 #include <nop/types/variant.h>
 
 #include <tensorpipe/channel/cuda_ipc/context_impl.h>
-#include <tensorpipe/channel/helpers.h>
 #include <tensorpipe/common/cuda.h>
 #include <tensorpipe/common/cuda_buffer.h>
 #include <tensorpipe/common/defs.h>
@@ -52,7 +51,6 @@ struct Ack {
 } // namespace
 
 SendOperation::SendOperation(
-    TDescriptorCallback descriptorCallback,
     TSendCallback callback,
     int deviceIdx,
     const void* ptr,
@@ -60,7 +58,6 @@ SendOperation::SendOperation(
     : ptr(ptr),
       deviceIdx(deviceIdx),
       stream(stream),
-      descriptorCallback(std::move(descriptorCallback)),
       callback(std::move(callback)) {}
 
 RecvOperation::RecvOperation(
@@ -90,14 +87,12 @@ void ChannelImpl::initImplFromLoop() {
 void ChannelImpl::sendImplFromLoop(
     uint64_t sequenceNumber,
     Buffer buffer,
-    TDescriptorCallback descriptorCallback,
     TSendCallback callback) {
   int deviceIdx = cudaDeviceForPointer(
       context_->getCudaLib(), buffer.unwrap<CudaBuffer>().ptr);
 
   SendOpIter opIter = sendOps_.emplaceBack(
       sequenceNumber,
-      std::move(descriptorCallback),
       std::move(callback),
       deviceIdx,
       buffer.unwrap<CudaBuffer>().ptr,
@@ -204,9 +199,6 @@ void ChannelImpl::callDescriptorCallback(SendOpIter opIter) {
   SendOperation& op = *opIter;
 
   if (error_) {
-    op.descriptorCallback(error_, std::string());
-    // Reset callback to release the resources it was holding.
-    op.descriptorCallback = nullptr;
     return;
   }
 
@@ -241,9 +233,6 @@ void ChannelImpl::callDescriptorCallback(SendOpIter opIter) {
       std::string(reinterpret_cast<const char*>(&handle), sizeof(handle)),
       offset,
       op.startEv->serializedHandle()};
-  op.descriptorCallback(error_, saveDescriptor(nopHolder));
-  // Reset callback to release the resources it was holding.
-  op.descriptorCallback = nullptr;
 }
 
 void ChannelImpl::readReply(SendOpIter opIter) {
@@ -308,7 +297,6 @@ void ChannelImpl::writeAck(SendOpIter opIter) {
 
 void ChannelImpl::recvImplFromLoop(
     uint64_t sequenceNumber,
-    TDescriptor descriptor,
     Buffer buffer,
     TRecvCallback callback) {
   int deviceIdx = cudaDeviceForPointer(
@@ -323,7 +311,8 @@ void ChannelImpl::recvImplFromLoop(
   opIter->callback = std::move(callback);
 
   NopHolder<Descriptor> nopHolder;
-  loadDescriptor(nopHolder, descriptor);
+  // FIXME
+  // loadDescriptor(nopHolder, descriptor);
   Descriptor& nopDescriptor = nopHolder.getObject();
   opIter->allocationId = std::move(nopDescriptor.allocationId);
   opIter->startEvHandle = std::move(nopDescriptor.startEvHandle);

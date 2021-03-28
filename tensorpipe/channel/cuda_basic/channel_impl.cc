@@ -72,7 +72,6 @@ void ChannelImpl::cudaCopy(
 void ChannelImpl::sendImplFromLoop(
     uint64_t sequenceNumber,
     Buffer buffer,
-    TDescriptorCallback descriptorCallback,
     TSendCallback callback) {
   int deviceIdx = cudaDeviceForPointer(
       context_->getCudaLib(), buffer.unwrap<CudaBuffer>().ptr);
@@ -101,8 +100,6 @@ void ChannelImpl::sendImplFromLoop(
 
     chunkSendOps_.advanceOperation(opIter);
   }
-
-  descriptorCallback(error_, std::string());
 }
 
 void ChannelImpl::advanceChunkSendOperation(
@@ -289,19 +286,16 @@ void ChannelImpl::sendCpuBuffer(ChunkSendOpIter opIter) {
              << " of " << op.numChunks << " for buffer #"
              << op.bufferSequenceNumber << " through CPU channel";
   CpuBuffer cpuBuffer{op.tmpBuffer.get(), op.length};
-  cpuChannel_->send(
-      cpuBuffer,
-      callbackWrapper_([opIter](ChannelImpl& impl, std::string descriptor) {
-        TP_DCHECK_EQ(descriptor, "");
-      }),
-      callbackWrapper_([opIter](ChannelImpl& impl) {
-        TP_VLOG(6) << "Channel " << impl.id_ << " is done sending chunk #"
-                   << opIter->chunkId << " of " << opIter->numChunks
-                   << " for buffer #" << opIter->bufferSequenceNumber
-                   << " through CPU channel";
-        opIter->doneSendingCpuBuffer = true;
-        impl.chunkSendOps_.advanceOperation(opIter);
-      }));
+  cpuChannel_->send(cpuBuffer, callbackWrapper_([opIter](ChannelImpl& impl) {
+                      TP_VLOG(6)
+                          << "Channel " << impl.id_
+                          << " is done sending chunk #" << opIter->chunkId
+                          << " of " << opIter->numChunks << " for buffer #"
+                          << opIter->bufferSequenceNumber
+                          << " through CPU channel";
+                      opIter->doneSendingCpuBuffer = true;
+                      impl.chunkSendOps_.advanceOperation(opIter);
+                    }));
 }
 
 void ChannelImpl::callSendCallback(ChunkSendOpIter opIter) {
@@ -316,10 +310,8 @@ void ChannelImpl::callSendCallback(ChunkSendOpIter opIter) {
 
 void ChannelImpl::recvImplFromLoop(
     uint64_t sequenceNumber,
-    TDescriptor descriptor,
     Buffer buffer,
     TRecvCallback callback) {
-  TP_DCHECK_EQ(descriptor, "");
   int deviceIdx = cudaDeviceForPointer(
       context_->getCudaLib(), buffer.unwrap<CudaBuffer>().ptr);
   CudaHostAllocator& cudaHostAllocator =
@@ -508,7 +500,6 @@ void ChannelImpl::receiveCpuBuffer(ChunkRecvOpIter opIter) {
              << " of " << op.numChunks << " for buffer #"
              << op.bufferSequenceNumber << " through CPU channel";
   cpuChannel_->recv(
-      "",
       CpuBuffer{op.tmpBuffer.get(), op.length},
       callbackWrapper_([opIter](ChannelImpl& impl) {
         TP_VLOG(6) << "Channel " << impl.id_ << " is done sending chunk #"
